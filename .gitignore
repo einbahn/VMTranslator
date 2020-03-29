@@ -1,0 +1,6 @@
+.idea
+.vscode
+MemoryAccess
+Pipfile*
+StackArithmetic
+tests

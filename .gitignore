@@ -1,8 +1,4 @@
 .idea
 .vscode
-MemoryAccess
 Pipfile*
-StackArithmetic
 tests
-FunctionCalls
-ProgramFlow

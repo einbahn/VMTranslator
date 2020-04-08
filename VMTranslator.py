@@ -606,6 +606,7 @@ class CodeWriter(object):
         @endFrame{0}
         M=D
         @endFrame{0}    // retAddr = *(endFrame - 5)
+        A=M
         D=M
         @5
         D=D-A
@@ -620,37 +621,41 @@ class CodeWriter(object):
         A=M
         M=D
         @ARG            // SP = ARG + 1
-        D=A+1
+        D=M+1
         @SP
-        A=M
         M=D
         @endFrame{0}    // THAT = *(endFrame - 1)
-        D=M-1
-        @THAT
         A=M
+        A=M-1
+        D=M
+        @THAT
         M=D
         @endFrame{0}    // THIS = *(endFrame - 2)
+        A=M
         D=M
         @2
-        D=D-A
+        A=D-A
+        D=M
         @THIS
-        A=M
         M=D
         @endFrame{0}    // ARG = *(endFrame - 3)
+        A=M
         D=M
         @3
-        D=D-A
+        A=D-A
+        D=M
         @ARG
-        A=M
         M=D
         @endFrame{0}    // LCL = *(endFrame - 4)
+        A=M
         D=M
         @4
-        D=D-A
+        A=D-A
+        D=M
         @LCL
-        A=M
         M=D
         @retAddr{0}     // goto retAddr
+        A=M
         0;JMP
         """
         self.file.writelines(trim(asm).format(self.labelcounter, '\n'))

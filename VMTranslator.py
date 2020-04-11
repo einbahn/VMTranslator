@@ -350,6 +350,7 @@ class CodeWriter(object):
                 M=M+1
                 """
                 self.file.writelines(trim(asm).format(commandstring, index))
+
             elif segment in ("local", "argument", "this", "that"):
                 asm = """
                 {0}
@@ -357,9 +358,9 @@ class CodeWriter(object):
                 D=M
                 @{2}
                 D=D+A
-                @addr{3}
+                @R13
                 M=D
-                @addr{3}
+                @R13
                 A=M
                 D=M
                 @SP
@@ -368,12 +369,8 @@ class CodeWriter(object):
                 @SP
                 M=M+1
                 """
-                self.file.writelines(
-                    trim(asm).format(
-                        commandstring, segmentName, index, self.labelcounter
-                    )
-                )
-                self.labelcounter += 1
+                self.file.writelines(trim(asm).format(commandstring, segmentName, index))
+
             elif segment == "temp":
                 segmentName = str(5 + int(index))
                 asm = """
@@ -387,6 +384,7 @@ class CodeWriter(object):
                 M=M+1
                 """
                 self.file.writelines(trim(asm).format(commandstring, segmentName))
+
             elif segment == "static":
                 segmentName = "{}.{}".format(self.filename, index)
                 asm = """
@@ -400,6 +398,7 @@ class CodeWriter(object):
                 M=M+1
                 """
                 self.file.writelines(trim(asm).format(commandstring, segmentName))
+
             elif segment == "pointer":
                 if index == "0":
                     segmentName = "THIS"
@@ -425,23 +424,19 @@ class CodeWriter(object):
                 D=M
                 @{2}
                 D=D+A
-                @addr{3}
+                @R13
                 M=D
                 @SP
                 M=M-1
                 @SP
                 A=M
                 D=M
-                @addr{3}
+                @R13
                 A=M
                 M=D
                 """
-                self.file.writelines(
-                    trim(asm).format(
-                        commandstring, segmentName, index, self.labelcounter
-                    )
-                )
-                self.labelcounter += 1
+                self.file.writelines(trim(asm).format(commandstring, segmentName, index))
+        
             elif segment == "temp":
                 segmentName = str(5 + int(index))
                 asm = """
@@ -469,6 +464,7 @@ class CodeWriter(object):
                 M=D
                 """
                 self.file.writelines(trim(asm).format(commandstring, segmentName))
+
             elif segment == "pointer":
                 if index == "0":
                     segmentName = "THIS"
@@ -520,7 +516,7 @@ class CodeWriter(object):
     def writecall(self, functionname, nargs):
         asm = """
         {3}// call {0} {1}
-        @{0}.retaddr{2} // push returnAddress
+        @{0}$ret.{2} // push returnAddress
         D=A
         @SP
         A=M
@@ -569,7 +565,7 @@ class CodeWriter(object):
         M=D
         @{0}        // goto {0} transfers control to the called function
         0;JMP
-        ({0}.retaddr{2})  // declares a label for the return address
+        ({0}$ret.{2})  // declares a label for the return address
         """
         self.file.writelines(trim(asm).format(
             functionname,
@@ -617,19 +613,17 @@ class CodeWriter(object):
 
     def writereturn(self):
         asm = """
-        {1}// return
+        {}// return
         @LCL            //endframe = LCL
         D=M
-        @endFrame{0}
-        M=D
-        @endFrame{0}    // retAddr = *(endFrame - 5)
-        D=M
+        @R13
+        M=D            // retAddr = *(endFrame - 5)
         @5
         A=D-A
         D=M
-        @retAddr{0}
+        @R14
         M=D
-        @SP             // *ARG = POP
+        @SP             // *ARG = POP()
         M=M-1
         @SP
         A=M
@@ -641,44 +635,44 @@ class CodeWriter(object):
         D=M+1
         @SP
         M=D
-        @endFrame{0}    // THAT = *(endFrame - 1)
+        @R13            // THAT = *(endFrame - 1)
         A=M-1
         D=M
         @THAT
         M=D
-        @endFrame{0}    // THIS = *(endFrame - 2)
+        @R13            // THIS = *(endFrame - 2)
         D=M
         @2
         A=D-A
         D=M
         @THIS
         M=D
-        @endFrame{0}    // ARG = *(endFrame - 3)
+        @R13            // ARG = *(endFrame - 3)
         D=M
         @3
         A=D-A
         D=M
         @ARG
         M=D
-        @endFrame{0}    // LCL = *(endFrame - 4)
+        @R13            // LCL = *(endFrame - 4)
         D=M
         @4
         A=D-A
         D=M
         @LCL
         M=D
-        @retAddr{0}     // goto retAddr
+        @R14            // goto retAddr
         A=M
         0;JMP
         """
-        self.file.writelines(trim(asm).format(self.labelcounter, '\n'))
-        self.labelcounter += 1
+        self.file.writelines(trim(asm).format('\n'))
+
 
 if __name__ == "__main__":
     inputdir = sys.argv[1]
     outputfile = os.path.basename(inputdir) + ".asm"
     outputfullname = os.path.join(inputdir, outputfile)
-    process_files = ['Sys.vm', 'Class1.vm', 'Class2.vm']
+    process_files = ['Sys.vm', 'Main.vm']
     for f in process_files:
         parser = Parser(os.path.join(inputdir, f))
         if f == 'Sys.vm':

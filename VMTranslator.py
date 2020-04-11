@@ -1,6 +1,6 @@
 import os
 import sys
-
+import re
 
 def trim(docstring):
     if not docstring:
@@ -82,7 +82,8 @@ class Parser(object):
             "C_FUNCTION",
             "C_CALL",
         ):
-            return self.currentCommand.split(' ')[2].replace('\n', '')
+            m = re.match(r'\w+', self.currentCommand.split(' ')[2])
+            return m[0]
         else:
             raise ValueError
 
@@ -91,10 +92,24 @@ class Parser(object):
 
 
 class CodeWriter(object):
-    def __init__(self, outputfile):
-        self.file = open(outputfile, "w")
+    def __init__(self, inputfile, outputfile, openmode, writeinit):
+        self.file = open(outputfile, openmode)
         self.labelcounter = 0
-        self.filename = os.path.basename(outputfile).replace(".asm", "")
+        self.filename = os.path.basename(inputfile).replace(".vm", "")
+        self.currfuncname = ''
+        if writeinit:
+            self.writeinit()
+
+    def writeinit(self):
+        asm = """
+        // bootstrap code 
+        @256
+        D=A
+        @SP
+        M=D
+        """
+        self.file.writelines(trim(asm))
+        self.writecall('Sys.init', '0')
 
     def writeArithmetic(self, command):
         if command == "add":
@@ -437,7 +452,6 @@ class CodeWriter(object):
                 A=M
                 D=M
                 @{1}
-                A=M
                 M=D
                 """
                 self.file.writelines(trim(asm).format(commandstring, segmentName))
@@ -473,21 +487,24 @@ class CodeWriter(object):
                 self.file.writelines(trim(asm).format(commandstring, segmentName))
         
     def writelabel(self, label):
+        f_label = "{}${}".format(self.currfuncname, label)
         asm = """
         {0}// label {1}
-        ({1})
+        ({2})
         """
-        self.file.writelines(trim(asm).format('\n', label))
+        self.file.writelines(trim(asm).format('\n', label, f_label))
     
     def writegoto(self, label):
+        f_label = "{}${}".format(self.currfuncname, label)
         asm = """
         {0}//goto {1}
-        @{1}
-        0;jmp
+        @{2}
+        0;JMP
         """
-        self.file.writelines(trim(asm).format('\n', label))
+        self.file.writelines(trim(asm).format('\n', label, f_label))
 
     def writeif(self, label):
+        f_label = "{}${}".format(self.currfuncname, label)
         asm = """
         {0}//if-goto {1}
         @SP
@@ -495,15 +512,14 @@ class CodeWriter(object):
         @SP
         A=M
         D=M
-        @{1}
+        @{2}
         D;JNE
         """
-        self.file.writelines(trim(asm).format('\n', label))
+        self.file.writelines(trim(asm).format('\n', label, f_label))
 
     def writecall(self, functionname, nargs):
         asm = """
         {3}// call {0} {1}
-        ({0}.retaddr{2}) // declare label
         @{0}.retaddr{2} // push returnAddress
         D=A
         @SP
@@ -512,35 +528,35 @@ class CodeWriter(object):
         @SP
         M=M+1
         @LCL        // push LCL
-        D=A
+        D=M
         @SP
         A=M
         M=D
         @SP
         M=M+1
         @ARG        // push ARG
-        D=A
+        D=M
         @SP
         A=M
         M=D
         @SP
         M=M+1 
         @THIS       // push THIS
-        D=A
+        D=M
         @SP
         A=M
         M=D
         @SP
         M=M+1
         @THAT       // push THAT
-        D=A
+        D=M
         @SP
         A=M
         M=D
         @SP
         M=M+1
         @SP         // arg = SP - 5 - nArgs
-        D=A
+        D=M
         @5
         D=D-A
         @{1}
@@ -548,7 +564,7 @@ class CodeWriter(object):
         @ARG
         M=D
         @SP         // LCL = SP
-        D=A
+        D=M
         @LCL
         M=D
         @{0}        // goto {0} transfers control to the called function
@@ -567,27 +583,27 @@ class CodeWriter(object):
     def writefunction(self, functionname, numlocals):
         asm = """{3}// function {0} {1}
         ({0})
-        @i{2}
+        @R13
         M=0
-        (LOOP{2})
-        @i{2}       // push 0 * numlocals
+        ({0}$LOOP.{2})
+        @R13       // push 0 * numlocals
         D=M
         @{1}
         D=D-A
-        @END{2}
+        @{0}$END.{2}
         D;JGE
         @LCL
         D=M
-        @i{2}
+        @R13
         A=D+M
         M=0
-        @i{2}
+        @R13
         M=M+1
         @SP
         M=M+1
-        @LOOP{2}
+        @{0}$LOOP.{2}
         0;JMP
-        (END{2})
+        ({0}$END.{2})
         """
         self.file.writelines(trim(asm).format(
             functionname,
@@ -597,19 +613,20 @@ class CodeWriter(object):
             )
         )
         self.labelcounter += 1
+        self.currfuncname = functionname
 
     def writereturn(self):
         asm = """
         {1}// return
         @LCL            //endframe = LCL
-        D=A
+        D=M
         @endFrame{0}
         M=D
         @endFrame{0}    // retAddr = *(endFrame - 5)
-        A=M
         D=M
         @5
-        D=D-A
+        A=D-A
+        D=M
         @retAddr{0}
         M=D
         @SP             // *ARG = POP
@@ -625,13 +642,11 @@ class CodeWriter(object):
         @SP
         M=D
         @endFrame{0}    // THAT = *(endFrame - 1)
-        A=M
         A=M-1
         D=M
         @THAT
         M=D
         @endFrame{0}    // THIS = *(endFrame - 2)
-        A=M
         D=M
         @2
         A=D-A
@@ -639,7 +654,6 @@ class CodeWriter(object):
         @THIS
         M=D
         @endFrame{0}    // ARG = *(endFrame - 3)
-        A=M
         D=M
         @3
         A=D-A
@@ -647,7 +661,6 @@ class CodeWriter(object):
         @ARG
         M=D
         @endFrame{0}    // LCL = *(endFrame - 4)
-        A=M
         D=M
         @4
         A=D-A
@@ -662,40 +675,46 @@ class CodeWriter(object):
         self.labelcounter += 1
 
 if __name__ == "__main__":
-    inputf = sys.argv[1]
-    outputfile = os.path.basename(inputf).replace(".vm", ".asm")
-    outputpath = os.path.split(inputf)[0]
-    outputfullname = os.path.join(outputpath, outputfile)
-    parser = Parser(inputf)
-    cw = CodeWriter(outputfullname)
-    while parser.hasMoreCommands:
-        parser.advance()
-        currcmd = parser.currentCommand
-        cmdtype = parser.commandtype(currcmd)
-        if cmdtype == "C_ARITHMETIC":
-            cw.writeArithmetic(parser.arg1(cmdtype))
-        elif cmdtype in ("C_PUSH", "C_POP"):
-            seg = parser.arg1(cmdtype)
-            idx = parser.arg2(cmdtype)
-            cw.writepushpop(cmdtype, seg, idx)
-        elif cmdtype in ('C_LABEL', 'C_GOTO', 'C_IF'):
-            label = parser.arg1(cmdtype)
-            if cmdtype == 'C_LABEL':
-                cw.writelabel(label)
-            elif cmdtype == 'C_GOTO':
-                cw.writegoto(label)
-            elif cmdtype == 'C_IF':
-                cw.writeif(label)
-        elif cmdtype == 'C_FUNCTION':
-            functionname = parser.arg1(cmdtype)
-            nlocals = parser.arg2(cmdtype)
-            cw.writefunction(functionname, nlocals)
-        elif cmdtype == 'C_CALL':
-            functionname = parser.arg1(cmdtype)
-            nargs = parser.arg2(cmdtype)
-            cw.writecall(functionname, nargs)
-        elif cmdtype == 'C_RETURN':
-            cw.writereturn()
-
-    cw.close()
-    parser.close()
+    inputdir = sys.argv[1]
+    outputfile = os.path.basename(inputdir) + ".asm"
+    outputfullname = os.path.join(inputdir, outputfile)
+    process_files = ['Sys.vm', 'Class1.vm', 'Class2.vm']
+    for f in process_files:
+        parser = Parser(os.path.join(inputdir, f))
+        if f == 'Sys.vm':
+            openmode = 'w'
+            writeinit = True
+        else:
+            openmode = 'a'
+            writeinit = False
+        cw = CodeWriter(f, outputfullname, openmode, writeinit)
+        while parser.hasMoreCommands:
+            parser.advance()
+            currcmd = parser.currentCommand
+            cmdtype = parser.commandtype(currcmd)
+            if cmdtype == "C_ARITHMETIC":
+                cw.writeArithmetic(parser.arg1(cmdtype))
+            elif cmdtype in ("C_PUSH", "C_POP"):
+                seg = parser.arg1(cmdtype)
+                idx = parser.arg2(cmdtype)
+                cw.writepushpop(cmdtype, seg, idx)
+            elif cmdtype in ('C_LABEL', 'C_GOTO', 'C_IF'):
+                label = parser.arg1(cmdtype)
+                if cmdtype == 'C_LABEL':
+                    cw.writelabel(label)
+                elif cmdtype == 'C_GOTO':
+                    cw.writegoto(label)
+                elif cmdtype == 'C_IF':
+                    cw.writeif(label)
+            elif cmdtype == 'C_FUNCTION':
+                functionname = parser.arg1(cmdtype)
+                nlocals = parser.arg2(cmdtype)
+                cw.writefunction(functionname, nlocals)
+            elif cmdtype == 'C_CALL':
+                functionname = parser.arg1(cmdtype)
+                nargs = parser.arg2(cmdtype)
+                cw.writecall(functionname, nargs)
+            elif cmdtype == 'C_RETURN':
+                cw.writereturn()
+        cw.close()
+        parser.close()
